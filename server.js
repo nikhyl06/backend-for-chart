@@ -41,23 +41,43 @@ app.use((req, res, next) => {
 });
 
 
-// Utility functions
-function isValidDate(dateString) {
-  const date = new Date(dateString);
-  return date instanceof Date && !isNaN(date);
+// Time frame utility functions
+function getTimeFrameDate(timeFrame) {
+  const now = new Date();
+  const timeFrameMap = {
+    "1W": () => new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+    "1M": () => new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()),
+    "3M": () => new Date(now.getFullYear(), now.getMonth() - 3, now.getDate()),
+    "6M": () => new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()),
+    "1Y": () => new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()),
+    "2Y": () => new Date(now.getFullYear() - 2, now.getMonth(), now.getDate()),
+    ALL: () => new Date("1900-01-01"),
+  };
+
+  return timeFrameMap[timeFrame?.toUpperCase()] || null;
 }
 
-function filterByDateRange(data, startDate, endDate) {
-  if (!startDate && !endDate) return data;
+function isValidTimeFrame(timeFrame) {
+  const validTimeFrames = ["1W", "1M", "3M", "6M", "1Y", "2Y", "ALL"];
+  return validTimeFrames.includes(timeFrame?.toUpperCase());
+}
+
+function filterByTimeFrame(data, timeFrame) {
+  if (!timeFrame || timeFrame.toUpperCase() === "ALL") {
+    return data.sort((a, b) => new Date(a.date) - new Date(b.date));
+  }
+
+  const getStartDate = getTimeFrameDate(timeFrame);
+  if (!getStartDate) return data;
+
+  const startDate = getStartDate();
 
   return data
     .filter((item) => {
       const itemDate = new Date(item.date);
-      const start = startDate ? new Date(startDate) : new Date("1900-01-01");
-      const end = endDate ? new Date(endDate) : new Date("2100-12-31");
-      return itemDate >= start && itemDate <= end;
+      return itemDate >= startDate;
     })
-    .sort((a, b) => new Date(a.date) - new Date(b.date)); // Sort by date ascending
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
 }
 
 function calculateStatistics(values) {
@@ -103,24 +123,14 @@ function calculateStatistics(values) {
 }
 
 // Validation middleware
-function validateDateRange(req, res, next) {
-  const { start, end } = req.query;
+function validateTimeFrame(req, res, next) {
+  const { timeframe } = req.query;
 
-  if (start && !isValidDate(start)) {
+  if (timeframe && !isValidTimeFrame(timeframe)) {
     return res.status(400).json({
-      error: "Invalid start date format. Use YYYY-MM-DD format.",
-    });
-  }
-
-  if (end && !isValidDate(end)) {
-    return res.status(400).json({
-      error: "Invalid end date format. Use YYYY-MM-DD format.",
-    });
-  }
-
-  if (start && end && new Date(start) > new Date(end)) {
-    return res.status(400).json({
-      error: "Start date cannot be after end date.",
+      error: "Invalid timeframe. Valid options: 1W, 1M, 3M, 6M, 1Y, 2Y, ALL",
+      received: timeframe,
+      valid_timeframes: ["1W", "1M", "3M", "6M", "1Y", "2Y", "ALL"],
     });
   }
 
@@ -133,53 +143,60 @@ function validateDateRange(req, res, next) {
 app.get("/", (req, res) => {
   res.json({
     name: "Stock Data API",
-    version: "1.0.0",
-    description: "API for retrieving stock ratios, prices, and market cap data",
+    version: "2.0.0",
+    description:
+      "API for retrieving stock ratios, prices, and market cap data with timeframe support",
+    timeframes: {
+      "1W": "Last 1 week",
+      "1M": "Last 1 month",
+      "3M": "Last 3 months",
+      "6M": "Last 6 months",
+      "1Y": "Last 1 year",
+      "2Y": "Last 2 years",
+      ALL: "All available data",
+    },
     endpoints: {
       "GET /api/stock/ratios": {
         description: "Get PE, PB, PS data with statistical overlays",
         parameters: {
           co_code: "Company code (required)",
           type: "Ratio type: pe|pb|ps (required)",
-          start: "Start date YYYY-MM-DD (optional)",
-          end: "End date YYYY-MM-DD (optional)",
+          timeframe:
+            "Time period: 1W|1M|3M|6M|1Y|2Y|ALL (optional, default: ALL)",
         },
-        example:
-          "/api/stock/ratios?co_code=38716&type=pe&start=2022-02-01&end=2022-02-28",
+        example: "/api/stock/ratios?co_code=38716&type=pe&timeframe=1Y",
       },
       "GET /api/stock/price": {
         description: "Get close price data for a specific stock",
         parameters: {
           co_code: "Company code (required)",
-          start: "Start date YYYY-MM-DD (optional)",
-          end: "End date YYYY-MM-DD (optional)",
+          timeframe:
+            "Time period: 1W|1M|3M|6M|1Y|2Y|ALL (optional, default: ALL)",
         },
-        example:
-          "/api/stock/price?co_code=13673&start=2022-04-01&end=2022-04-30",
+        example: "/api/stock/price?co_code=13673&timeframe=6M",
       },
       "GET /api/stock/market-cap": {
         description: "Get market cap data for multiple companies",
         parameters: {
           co_codes: "Comma-separated company codes (required)",
-          start: "Start date YYYY-MM-DD (optional)",
-          end: "End date YYYY-MM-DD (optional)",
+          timeframe:
+            "Time period: 1W|1M|3M|6M|1Y|2Y|ALL (optional, default: ALL)",
         },
-        example:
-          "/api/stock/market-cap?co_codes=13673,5020,199&start=2022-04-01&end=2022-04-30",
+        example: "/api/stock/market-cap?co_codes=13673,5020&timeframe=3M",
       },
     },
   });
 });
 
 // 1. GET /api/stock/ratios - Get PE, PB, PS data with statistics
-app.get("/api/stock/ratios", validateDateRange, (req, res) => {
+app.get("/api/stock/ratios", validateTimeFrame, (req, res) => {
   try {
-    const { co_code, type, start, end } = req.query;
+    const { co_code, type, timeframe = "ALL" } = req.query;
 
     if (!co_code || !type) {
       return res.status(400).json({
         error: "Missing required parameters: co_code and type",
-        example: "/api/stock/ratios?co_code=38716&type=pe",
+        example: "/api/stock/ratios?co_code=38716&type=pe&timeframe=1Y",
       });
     }
 
@@ -198,14 +215,14 @@ app.get("/api/stock/ratios", validateDateRange, (req, res) => {
       });
     }
 
-    // Filter by date range
-    const filteredData = filterByDateRange(companyData, start, end);
+    // Filter by timeframe
+    const filteredData = filterByTimeFrame(companyData, timeframe);
 
     if (filteredData.length === 0) {
       return res.status(404).json({
-        error: "No data found for the specified date range",
+        error: "No data found for the specified timeframe",
         co_code,
-        date_range: { start, end },
+        timeframe,
       });
     }
 
@@ -222,7 +239,12 @@ app.get("/api/stock/ratios", validateDateRange, (req, res) => {
     res.json({
       co_code,
       type: type.toLowerCase(),
-      date_range: { start, end },
+      timeframe: timeframe.toUpperCase(),
+      period_info: {
+        start_date: series[0]?.date,
+        end_date: series[series.length - 1]?.date,
+        data_points: series.length,
+      },
       series,
       statistics,
     });
@@ -233,14 +255,14 @@ app.get("/api/stock/ratios", validateDateRange, (req, res) => {
 });
 
 // 2. GET /api/stock/price - Get close price data
-app.get("/api/stock/price", validateDateRange, (req, res) => {
+app.get("/api/stock/price", validateTimeFrame, (req, res) => {
   try {
-    const { co_code, start, end } = req.query;
+    const { co_code, timeframe = "ALL" } = req.query;
 
     if (!co_code) {
       return res.status(400).json({
         error: "Missing required parameter: co_code",
-        example: "/api/stock/price?co_code=13673",
+        example: "/api/stock/price?co_code=13673&timeframe=6M",
       });
     }
 
@@ -252,14 +274,14 @@ app.get("/api/stock/price", validateDateRange, (req, res) => {
       });
     }
 
-    // Filter by date range
-    const filteredData = filterByDateRange(companyData, start, end);
+    // Filter by timeframe
+    const filteredData = filterByTimeFrame(companyData, timeframe);
 
     if (filteredData.length === 0) {
       return res.status(404).json({
-        error: "No data found for the specified date range",
+        error: "No data found for the specified timeframe",
         co_code,
-        date_range: { start, end },
+        timeframe,
       });
     }
 
@@ -271,7 +293,12 @@ app.get("/api/stock/price", validateDateRange, (req, res) => {
 
     res.json({
       co_code,
-      date_range: { start, end },
+      timeframe: timeframe.toUpperCase(),
+      period_info: {
+        start_date: series[0]?.date,
+        end_date: series[series.length - 1]?.date,
+        data_points: series.length,
+      },
       series,
     });
   } catch (error) {
@@ -281,14 +308,14 @@ app.get("/api/stock/price", validateDateRange, (req, res) => {
 });
 
 // 3. GET /api/stock/market-cap - Get market cap data for multiple companies
-app.get("/api/stock/market-cap", validateDateRange, (req, res) => {
+app.get("/api/stock/market-cap", validateTimeFrame, (req, res) => {
   try {
-    const { co_codes, start, end } = req.query;
+    const { co_codes, timeframe = "ALL" } = req.query;
 
     if (!co_codes) {
       return res.status(400).json({
         error: "Missing required parameter: co_codes",
-        example: "/api/stock/market-cap?co_codes=13673,5020,199",
+        example: "/api/stock/market-cap?co_codes=13673,5020&timeframe=3M",
       });
     }
 
@@ -300,8 +327,8 @@ app.get("/api/stock/market-cap", validateDateRange, (req, res) => {
       const companyData = ohlc_by_co_code[co_code];
 
       if (companyData) {
-        // Filter by date range
-        const filteredData = filterByDateRange(companyData, start, end);
+        // Filter by timeframe
+        const filteredData = filterByTimeFrame(companyData, timeframe);
 
         // Extract market cap series
         const series = filteredData.map((item) => ({
@@ -311,6 +338,11 @@ app.get("/api/stock/market-cap", validateDateRange, (req, res) => {
 
         result.push({
           co_code,
+          period_info: {
+            start_date: series[0]?.date,
+            end_date: series[series.length - 1]?.date,
+            data_points: series.length,
+          },
           series,
         });
       } else {
@@ -319,7 +351,7 @@ app.get("/api/stock/market-cap", validateDateRange, (req, res) => {
     }
 
     const response = {
-      date_range: { start, end },
+      timeframe: timeframe.toUpperCase(),
       data: result,
     };
 
@@ -348,14 +380,25 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Get available company codes
-app.get("/api/companies", (req, res) => {
+// Get available company codes and timeframes
+app.get("/api/info", (req, res) => {
   res.json({
-    ratios_companies: Object.keys(ratios_by_co_code),
-    ohlc_companies: Object.keys(ohlc_by_co_code),
-    total_companies: {
-      ratios: Object.keys(ratios_by_co_code).length,
-      ohlc: Object.keys(ohlc_by_co_code).length,
+    timeframes: {
+      "1W": "Last 1 week",
+      "1M": "Last 1 month",
+      "3M": "Last 3 months",
+      "6M": "Last 6 months",
+      "1Y": "Last 1 year",
+      "2Y": "Last 2 years",
+      ALL: "All available data",
+    },
+    companies: {
+      ratios_companies: Object.keys(ratios_by_co_code),
+      ohlc_companies: Object.keys(ohlc_by_co_code),
+      total_companies: {
+        ratios: Object.keys(ratios_by_co_code).length,
+        ohlc: Object.keys(ohlc_by_co_code).length,
+      },
     },
   });
 });
@@ -378,7 +421,7 @@ app.use((req, res) => {
     available_endpoints: [
       "GET /",
       "GET /health",
-      "GET /api/companies",
+      "GET /api/info",
       "GET /api/stock/ratios",
       "GET /api/stock/price",
       "GET /api/stock/market-cap",
@@ -406,61 +449,64 @@ loadData().then(() => {
   });
 });
 
-// Test the endpoints after server starts
+// Test the endpoints with timeframes
 setTimeout(async () => {
-  console.log("\n🧪 Running endpoint tests...\n");
+  console.log("\n🧪 Testing timeframe endpoints...\n");
 
   try {
-    // Test ratios endpoint
-    console.log("Testing /api/stock/ratios...");
+    // Test ratios with 1Y timeframe
+    console.log("Testing /api/stock/ratios with 1Y timeframe...");
     const ratiosResponse = await fetch(
-      `http://localhost:${PORT}/api/stock/ratios?co_code=38716&type=pe&start=2022-02-01&end=2022-02-28`
+      `http://localhost:${PORT}/api/stock/ratios?co_code=38716&type=pe&timeframe=1Y`
     );
     const ratiosData = await ratiosResponse.json();
     console.log(
-      "✅ Ratios endpoint:",
-      ratiosData.statistics
-        ? "Statistics calculated successfully"
-        : "No statistics"
+      "✅ Ratios (1Y):",
+      `${ratiosData.series?.length || 0} data points, period: ${
+        ratiosData.period_info?.start_date
+      } to ${ratiosData.period_info?.end_date}`
     );
 
-    // Test price endpoint
-    console.log("\nTesting /api/stock/price...");
+    // Test price with 6M timeframe
+    console.log("\nTesting /api/stock/price with 6M timeframe...");
     const priceResponse = await fetch(
-      `http://localhost:${PORT}/api/stock/price?co_code=13673&start=2022-04-01&end=2022-04-30`
+      `http://localhost:${PORT}/api/stock/price?co_code=13673&timeframe=6M`
     );
     const priceData = await priceResponse.json();
     console.log(
-      "✅ Price endpoint:",
-      `${priceData.series?.length || 0} data points returned`
+      "✅ Price (6M):",
+      `${priceData.series?.length || 0} data points, period: ${
+        priceData.period_info?.start_date
+      } to ${priceData.period_info?.end_date}`
     );
 
-    // Test market cap endpoint
-    console.log("\nTesting /api/stock/market-cap...");
+    // Test market cap with 3M timeframe
+    console.log("\nTesting /api/stock/market-cap with 3M timeframe...");
     const mcapResponse = await fetch(
-      `http://localhost:${PORT}/api/stock/market-cap?co_codes=13673,5020,199&start=2022-04-01&end=2022-04-30`
+      `http://localhost:${PORT}/api/stock/market-cap?co_codes=13673,5020&timeframe=3M`
     );
     const mcapData = await mcapResponse.json();
     console.log(
-      "✅ Market cap endpoint:",
+      "✅ Market cap (3M):",
       `${mcapData.data?.length || 0} companies returned`
     );
 
-    // Test companies endpoint
-    console.log("\nTesting /api/companies...");
-    const companiesResponse = await fetch(
-      `http://localhost:${PORT}/api/companies`
+    // Test ALL timeframe
+    console.log("\nTesting /api/stock/ratios with ALL timeframe...");
+    const allResponse = await fetch(
+      `http://localhost:${PORT}/api/stock/ratios?co_code=38716&type=pe&timeframe=ALL`
     );
-    const companiesData = await companiesResponse.json();
+    const allData = await allResponse.json();
     console.log(
-      "✅ Companies endpoint:",
-      `${companiesData.total_companies?.ratios || 0} ratios companies, ${
-        companiesData.total_companies?.ohlc || 0
-      } OHLC companies`
+      "✅ Ratios (ALL):",
+      `${allData.series?.length || 0} data points, period: ${
+        allData.period_info?.start_date
+      } to ${allData.period_info?.end_date}`
     );
 
-    console.log("\n🎉 All tests completed successfully!");
+    console.log("\n🎉 All timeframe tests completed successfully!");
   } catch (error) {
     console.log("❌ Test failed:", error.message);
   }
 }, 1500);
+
